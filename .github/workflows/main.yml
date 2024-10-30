@@ -1,0 +1,196 @@
+# .github/workflows/main.yml
+name: APG - Pipeline - Open MLOps
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - zmain
+
+env:
+  AWS_REGION: us-east-1 
+  BUCKET_DATASET: ${{ vars.APG_BUCKET_DATA }}/${{ vars.PATH_DATASET }}
+  BUCKET_MODEL: ${{ vars.APG_BUCKET_ARTIFACT }}/${{ vars.PATH_MODEL }}
+  AWS_ACCOUNT: 000000000000
+
+jobs:
+  ######## JOB-01
+  ########
+  check_aws_setup:
+    name: Check whether AWS Environment is set up or not
+    runs-on: ubuntu-latest 
+    outputs:
+      status: ${{ join(steps.*.conclusion) }}
+      next: ${{ steps.check.outputs.should-run }}
+
+    steps:
+      # Step 1: Set up AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+      # Step 2: Checks if AWS infrastructure has been created
+      - id: check
+        name: Check if Data Bucket was Created
+        run: |
+            if aws s3 ls "s3://${{ vars.APG_BUCKET_DATA }}" 2>&1 | grep -q 'NoSuchBucket'
+            then
+            echo "should-run=true" >> $GITHUB_OUTPUT;
+            else
+            echo "should-run=false" >> $GITHUB_OUTPUT;
+            fi
+ 
+  ######## JOB-02
+  ########
+  terraform_suser:
+    name: Terraform to set up Git Account Super User
+    needs: check_aws_setup
+    if: needs.check_aws_setup.outputs.next == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+        run:
+          working-directory: ./terraform/suser/
+
+    steps:
+      # Step 1: Checkout the repository
+      - name: Checkout code
+        uses: actions/checkout@v3
+      # Step 2: Set up AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+      # Step 3: Get AWS Accounts
+      #- name: Get aws account
+      #  run: | 
+      #    echo AWS_ACCOUNT=`aws sts get-caller-identity --query Account --output text` >> $GITHUB_ENV
+      # Step 4: Set up Terraform
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.7  # Use the Terraform version you need
+      # Step 5: Initialize Terraform for Suser
+      - name: Terraform Init Suser
+        run: terraform init
+      #Step 6: Apply Terraform for Suser
+      - name: Terraform Apply Suser
+        run: | 
+            terraform apply -auto-approve \
+                -var='git_user=${{ vars.GIT_USER }}' 
+        #        -var='git_user=arn:aws:iam::${{ env.AWS_ACCOUNT }}:user/${{ vars.GIT_USER }}' 
+
+  ######## JOB-03
+  ########
+  terraform:
+    name: Apply Terraform to set up AWS infra
+    needs: [check_aws_setup, terraform_suser]
+    if: needs.check_aws_setup.outputs.next == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+        run:
+          working-directory: ./terraform/
+
+    steps:
+     # Step 1: Checkout the repository
+      - name: Checkout code
+        uses: actions/checkout@v3
+      # Step 2: Set up AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+      # Step 3: Set up Terraform
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.7  # Use the Terraform version you need
+      # Step 4: Initialize Terraform
+      - name: Terraform Init
+        run: terraform init
+      #Step 5: Apply Terraform
+      - name: Terraform Apply
+        run: | 
+            terraform apply -auto-approve \
+                -var='git_user=${{ vars.GIT_USER }}' 
+
+  ######## JOB-04
+  ########
+  import_data:
+    name: Import Data to S3
+    needs: [check_aws_setup, terraform]
+    if: always()
+    runs-on: ubuntu-latest
+    defaults:
+        run:
+          working-directory: ./data
+
+    steps:
+      # Step 1: Checkout the repository
+      - name: Checkout code
+        uses: actions/checkout@v3
+      # Step 2: Configure AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+      # Step 3: Import data to S3
+      - name: Upload Heart Disease CSV to S3
+        run: |
+          aws s3 cp external/heart_disease_uci.csv s3://${{ env.BUCKET_DATASET }}/heart/heart_disease_uci.csv
+
+  ######## JOB-05
+  ########
+  sage_pipeline:
+    name: Create and Sagemaker Pipelines
+    needs: [import_data]
+    if: always() && needs.import_data.result == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout the repository
+      - name: Checkout code
+        uses: actions/checkout@v3
+      # Step 2: Configure AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+      # Step 3: Get AWS Account
+      - id: getaccount
+        name: Get aws account
+        run: | 
+          echo AWS_ACCOUNT=`aws sts get-caller-identity --query Account --output text` >> $GITHUB_ENV
+      # Step 4: 
+      #- name: Setup Py 
+      #  uses: actions/setup-python@v5
+      #  with:
+      #    python-version: '3.11'
+      #    cache: 'pip' # caching pip dependencies
+      # Step 5: Install Py dependencies
+      - name: Install Requirements 
+        run: | 
+          pip install -r requirements.txt
+      # Step 6: Create Sagemaker pipeline
+      - name: Sagemaker pipelines
+        run: |
+          python3 src/main.py \
+            -n 'models.pipeline' \
+            -c '${{ vars.CLASS_NAME }}' \
+            -role-arn 'arn:aws:iam::${{ env.AWS_ACCOUNT }}:role/${{ vars.ROLE_SAGEMAKER }}' \
+            -description 'Pipeline to implement ML Ops to heart diease use case description' \
+            -tags '[${{ vars.RESOURCE_DEFAULT_TAGS }}]' \
+            -kwargs '{"region" : "${{ vars.AWS_REGION }}", \
+              "role" : "arn:aws:iam::${{ env.AWS_ACCOUNT }}:role/${{ vars.ROLE_SAGEMAKER }}", \
+              "inputdata" : "s3://${{ env.BUCKET_DATASET }}/heart/heart_disease_uci.csv", \
+              "modelpath" : "s3://${{ env.BUCKET_MODEL }}/apg-heart-model", \
+              "logpath" : "s3://${{ vars.APG_BUCKET_LOG }}"}'

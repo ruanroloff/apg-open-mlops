@@ -1,0 +1,121 @@
+# .github/workflows/clean.yml
+name: APG - Pipeline - Clean Resources
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - zmain
+
+env:
+  AWS_REGION: us-east-1 ##region##
+  BUCKET_DATASET: ${{ vars.APG_BUCKET_DATA }}/${{ vars.PATH_DATASET }}
+  BUCKET_MODEL: ${{ vars.APG_BUCKET_ARTIFACT }}/${{ vars.PATH_MODEL }}
+  AWS_ACCOUNT: 000000000000
+  #ROLE_SAGEMAKER_ARN: role
+  #APG_BUCKET_DATA: ${{ vars.APG_BUCKET_DATA }} ##s3bucket for data##
+
+jobs:
+  check_aws_setup:
+    name: Clean AWS Environment
+    runs-on: ubuntu-latest 
+
+    steps:
+      # Step 1: Set up AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+      # Step 2: Delete Data
+      - id: delete
+        name: Delete Data from Buckets 
+        continue-on-error: true
+        run: |
+            bucket_name=apg-bucket-data
+            aws s3api delete-objects \
+              --bucket ${bucket_name} \
+              --delete "$(aws s3api list-object-versions --bucket "${bucket_name}" --output=json --query='{Objects: Versions[].{Key:Key,VersionId:VersionId}}')"
+            bucket_name=apg-bucket-art
+            aws s3api delete-objects \
+              --bucket ${bucket_name} \
+              --delete "$(aws s3api list-object-versions --bucket "${bucket_name}" --output=json --query='{Objects: Versions[].{Key:Key,VersionId:VersionId}}')"
+            bucket_name=apg-bucket-log
+            aws s3api delete-objects \
+              --bucket ${bucket_name} \
+              --delete "$(aws s3api list-object-versions --bucket "${bucket_name}" --output=json --query='{Objects: Versions[].{Key:Key,VersionId:VersionId}}')"
+            echo endstep2
+      # Step 3: Clean bucket
+      - id: cleanbucket
+        name: Clean Buckets
+        continue-on-error: true
+        run: |
+            bucket_name=apg-bucket-data
+            aws s3api delete-bucket --bucket ${bucket_name}
+            bucket_name=apg-bucket-art
+            aws s3api delete-bucket --bucket ${bucket_name}
+            bucket_name=apg-bucket-log
+            aws s3api delete-bucket --bucket ${bucket_name}
+            echo endstep3
+      # Step 4: Clean Model
+      - id: clenamodel
+        name: Delete Model 
+        continue-on-error: true
+        run: |
+            varmodelgrp=$(aws sagemaker list-model-packages --model-package-group-name apg-model-pkg-heart  --output=text --query='{Objects: ModelPackageSummaryList[].{ModelPackageArn:ModelPackageArn}}')
+            varmodel=${varmodelgrp//OBJECTS/}
+            varmodel_s="$( echo "$varmodel" | sed 's/[[:space:]]//g')"
+            echo "$varmodel_s"
+            aws sagemaker delete-model-package --model-package-name $varmodel_s
+        #aws sagemaker delete-model-package --model-package-name 'arn:aws:sagemaker:us-east-1:180294181946:model-package/apg-model-pkg-heart/2'
+
+      # Step 5: Clean Sagemaker
+      - id: clensage
+        name: Clean Sagemaker 
+        continue-on-error: true
+        run: |
+            aws sagemaker delete-model-package-group --model-package-group-name apg-model-pkg-heart
+
+      # Step 6.a: Clean Domain Sage User
+      - id: cleandomainuser
+        name: Clean Domain Sagemaker User
+        continue-on-error: true
+        run: |
+            vardomain=$(aws sagemaker list-domains --output=text --query='{Objects: Domains[].{DomainId:DomainId}}')
+            vardomain=${vardomain//OBJECTS/}
+            aws sagemaker delete-user-profile --domain-id $vardomain --user-profile-name apg-user-profile-sage --output text
+        #aws sagemaker list-domains
+
+      # Step 6.b: Clean Domain Sage
+      - id: cleandomain
+        name: Clean Domain Sagemaker
+        continue-on-error: true
+        run: |
+            vardomain=$(aws sagemaker list-domains --output=text --query='{Objects: Domains[].{DomainId:DomainId}}')
+            vardomain=${vardomain//OBJECTS/}
+            sleep 10
+            aws sagemaker delete-domain --domain-id $vardomain
+        #aws sagemaker list-domains
+
+      # Step 7: Clean resource
+      - id: cleanresource
+        name: Clean Resources 
+        continue-on-error: true
+        run: |
+            aws_account=180294181946
+            username=apg-github-actions-user
+            rolename=apg-role-sage
+
+            policyname=APG-Super-Policy-Sage
+            aws iam detach-user-policy --user-name ${username} --policy-arn arn:aws:iam::${aws_account}:policy/${policyname}
+            aws iam delete-policy --policy-arn arn:aws:iam::${aws_account}:policy/${policyname}
+            
+            policyname=APG-Policy-2-Mlflow
+            aws iam detach-role-policy --role-name ${rolename} --policy-arn arn:aws:iam::${aws_account}:policy/${policyname}
+            aws iam delete-policy --policy-arn arn:aws:iam::${aws_account}:policy/${policyname}
+            
+            aws iam detach-role-policy --role-name ${rolename} --policy-arn arn:aws:iam::aws:policy/AmazonS3FullAccess
+            aws iam detach-role-policy --role-name ${rolename} --policy-arn arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+            aws iam delete-role --role-name ${rolename} 
+            echo end step4
