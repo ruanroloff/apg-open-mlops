@@ -1,0 +1,10 @@
+awscli
+s3fs
+pandas
+numpy
+scikit-learn
+lightgbm
+xgboost
+sagemaker
+mlflow==2.13.2
+sagemaker-mlflow==0.1.0
