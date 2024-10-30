@@ -1,5 +1,7 @@
 # APG - Open Machine Learning Operations
 
+Alpha version. 0.5
+
 The main objective of this repository is to serve as a study tool to experiment the deployment of AI/ML models in a non-production environment, using the concept of MLOPs, and as many open components, free-tier services, and low-cost services as possible. Other goals of this repository it is to provide a set of artifacts that can leverage MLOps as part of the any AI/ML Use case. This includes:
 
 - MLOps/Data Science folder structure
@@ -134,6 +136,8 @@ The 'target' column 'num' in the dataset represents the:
   - 2: Moderate heart disease.
   - 3: Severe heart disease.
   - 4: Critical heart disease
+
+> **_NOTE:_** Remember, the objective of this project is to analyze the MLOps process as a whole. The Use case selected here is only to illustrate machine learning techniques and metrics, and the dataset problem will not be researched in depth in this project, so, there may be flaws in the techniques used in the analysis of the dataset, as well as arbitrary weighting and others.
 
 **Solution Architecture**
 
