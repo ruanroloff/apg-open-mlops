@@ -5,7 +5,7 @@ on:
   workflow_dispatch: {}
   push:
     branches:
-      - zmain
+      - main
 
 env:
   AWS_REGION: us-east-1 ##region##
